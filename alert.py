@@ -66,7 +66,7 @@ def send_presence_notification():
         "to": [NOTIFY_USER],
         "content": content,
     })
-    print("Presence notification sent:", content)
+    print("Notification: ", content)
 
 # -----------------------------
 # Heartbeat Thread
@@ -128,7 +128,7 @@ def handle_event(event):
                 "to": [NOTIFY_USER],
                 "content": "Alert: Join Teams Meeting",
             })
-            print("Message alert sent:", result)
+            print("Notification: Message")
         except Exception as e:
             print("Error sending meeting alert:", e)
 
@@ -141,7 +141,7 @@ def presence_monitor_loop():
 
     while True:
         current_status = get_user_presence(TARGET_USER_ID)
-        print("Current status:", current_status)
+        # print("Current status:", current_status)
 
         if current_status == "active" and last_status != "active":
             send_presence_notification()
@@ -160,7 +160,7 @@ if __name__ == "__main__":
     client.send_message({
         "type": "private",
         "to": [NOTIFY_USER],
-        "content": "Alert: Bot started (Railway worker running)"
+        "content": "Alert: worker"
     })
 
     # Start heartbeat thread
@@ -172,3 +172,4 @@ if __name__ == "__main__":
     # Start Zulip event listener (blocking)
 
     client.call_on_each_event(handle_event, event_types=["message"])
+
