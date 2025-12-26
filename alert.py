@@ -126,9 +126,9 @@ def handle_event(event):
             result = client.send_message({
                 "type": "private",
                 "to": [NOTIFY_USER],
-                "content": "Alert: Teams Meeting - Join",
+                "content": "Alert: Join Teams Meeting",
             })
-            print("Meeting alert sent:", result)
+            print("Message alert sent:", result)
         except Exception as e:
             print("Error sending meeting alert:", e)
 
@@ -170,4 +170,5 @@ if __name__ == "__main__":
     threading.Thread(target=presence_monitor_loop, daemon=True).start()
 
     # Start Zulip event listener (blocking)
+
     client.call_on_each_event(handle_event, event_types=["message"])
