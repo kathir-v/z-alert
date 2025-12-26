@@ -66,7 +66,7 @@ def send_presence_notification():
         "to": [NOTIFY_USER],
         "content": content,
     })
-    print("Notification: ", content)
+    print("Notification:", content)
 
 # -----------------------------
 # Heartbeat Thread
@@ -160,7 +160,7 @@ if __name__ == "__main__":
     client.send_message({
         "type": "private",
         "to": [NOTIFY_USER],
-        "content": "Alert: worker"
+        "content": "Alert: Started"
     })
 
     # Start heartbeat thread
@@ -172,4 +172,5 @@ if __name__ == "__main__":
     # Start Zulip event listener (blocking)
 
     client.call_on_each_event(handle_event, event_types=["message"])
+
 
