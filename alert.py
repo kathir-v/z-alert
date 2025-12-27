@@ -84,8 +84,8 @@ def send_heartbeat_loop():
         if 6 <= hour < 22 and minute == 0:
             if last_sent_hour != hour:
                 content = (
-                    f"Heartbeat: Bot running on Railway.\n"
-                    f"Current time (JST): {now_jst.strftime('%Y-%m-%d %H:%M:%S')}"
+                    f"Railway:\n"
+                    f"Current time (JST): {now_jst.strftime('%H:%M:%S')}"
                 )
                 try:
                     result = client.send_message({
@@ -98,7 +98,7 @@ def send_heartbeat_loop():
                 except Exception as e:
                     print("Error sending heartbeat:", e)
 
-        time.sleep(60)
+        time.sleep(180)
 
 # -----------------------------
 # Zulip Message Event Handler
@@ -172,5 +172,6 @@ if __name__ == "__main__":
     # Start Zulip event listener (blocking)
 
     client.call_on_each_event(handle_event, event_types=["message"])
+
 
 
