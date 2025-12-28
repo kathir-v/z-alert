@@ -74,6 +74,9 @@ def send_presence_notification():
 def send_heartbeat_loop():
     last_sent_hour = None
 
+    # Heartbeat schedule in JST
+    allowed_hours = {7, 10, 13, 16, 19, 22}
+
     while True:
         now_utc = datetime.now(timezone.utc)
         now_jst = now_utc + timedelta(hours=9)
@@ -81,11 +84,12 @@ def send_heartbeat_loop():
         hour = now_jst.hour
         minute = now_jst.minute
 
-        if 6 <= hour < 22 and minute == 0:
+        # Send only at exact hour, minute 0, and only if in allowed schedule
+        if hour in allowed_hours and minute == 0:
             if last_sent_hour != hour:
                 content = (
-                    f"Railway:\n"
-                    f"Current time (JST): {now_jst.strftime('%H:%M:%S')}"
+                    f"Railway Heartbeat:\n"
+                    f"Current time (JST): {now_jst.strftime('%Y-%m-%d %H:%M:%S')}"
                 )
                 try:
                     result = client.send_message({
@@ -98,7 +102,7 @@ def send_heartbeat_loop():
                 except Exception as e:
                     print("Error sending heartbeat:", e)
 
-        time.sleep(180)
+        time.sleep(60)
 
 # -----------------------------
 # Zulip Message Event Handler
@@ -172,6 +176,7 @@ if __name__ == "__main__":
     # Start Zulip event listener (blocking)
 
     client.call_on_each_event(handle_event, event_types=["message"])
+
 
 
 
