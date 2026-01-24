@@ -5,8 +5,25 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI
+from contextlib import asynccontextmanager
 
 app = FastAPI()
+
+@asynccontextmanager
+async def lifespan(app):
+    # Start background threads here
+    threading.Thread(target=send_heartbeat_loop, daemon=True).start()
+    threading.Thread(target=presence_monitor_loop, daemon=True).start()
+    threading.Thread(
+        target=lambda: client.call_on_each_event(handle_event, event_types=["message"]),
+        daemon=True
+    ).start()
+
+    yield  # FastAPI starts serving after this point
+
+    # Optional: cleanup code goes here when the app shuts down
+
+app = FastAPI(lifespan=lifespan)
 
 @app.get("/ping")
 def ping():
@@ -162,22 +179,3 @@ def presence_monitor_loop():
         last_status = current_status
         time.sleep(60)
 
-# -----------------------------
-# Main
-# -----------------------------
-if __name__ == "__main__":
-    # Notify startup
-    client.send_message({
-        "type": "private",
-        "to": [NOTIFY_USER],
-        "content": "Alert: Started"
-    })
-
-    # Start heartbeat thread
-    threading.Thread(target=send_heartbeat_loop, daemon=True).start()
-
-    # Start presence monitor thread
-    threading.Thread(target=presence_monitor_loop, daemon=True).start()
-
-    # Start Zulip event listener (blocking)
-    client.call_on_each_event(handle_event, event_types=["message"])
