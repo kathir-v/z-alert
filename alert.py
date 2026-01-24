@@ -4,7 +4,6 @@ import json
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from fastapi import FastAPI
 
 app = FastAPI()
@@ -164,25 +163,6 @@ def presence_monitor_loop():
         time.sleep(60)
 
 # -----------------------------
-# Lightweight Ping Server
-# -----------------------------
-class PingHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/ping":
-            self.send_response(200)
-            self.send_header("Content-type", "text/plain")
-            self.end_headers()
-            self.wfile.write(b"alive")
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-def start_ping_server():
-    server = HTTPServer(("0.0.0.0", 8000), PingHandler)
-    print("Ping server running on port 8000")
-    server.serve_forever()
-
-# -----------------------------
 # Main
 # -----------------------------
 if __name__ == "__main__":
@@ -192,9 +172,6 @@ if __name__ == "__main__":
         "to": [NOTIFY_USER],
         "content": "Alert: Started"
     })
-
-    # Start ping server (for Cloud Scheduler)
-    threading.Thread(target=start_ping_server, daemon=True).start()
 
     # Start heartbeat thread
     threading.Thread(target=send_heartbeat_loop, daemon=True).start()
