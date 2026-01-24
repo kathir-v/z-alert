@@ -1,1 +1,4 @@
 config_localonly.json
+__pycache__/
+*.pyc
+presence.json
