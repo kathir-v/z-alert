@@ -1,50 +1,51 @@
-import zulip
 import os
 import json
-import threading
 import time
+import threading
 from datetime import datetime, timedelta, timezone
-from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
-app = FastAPI()
+import zulip
+from fastapi import FastAPI
 
-@asynccontextmanager
-async def lifespan(app):
-    # Start background threads here
-    threading.Thread(target=send_heartbeat_loop, daemon=True).start()
-    threading.Thread(target=presence_monitor_loop, daemon=True).start()
-    threading.Thread(
-        target=lambda: client.call_on_each_event(handle_event, event_types=["message"]),
-        daemon=True
-    ).start()
+# ============================================================
+#  CONFIG LOADING (ENV first, fallback to config_localonly.json)
+# ============================================================
 
-    yield  # FastAPI starts serving after this point
+def load_zulip_config():
+    email = os.environ.get("ZULIP_EMAIL")
+    api_key = os.environ.get("ZULIP_API_KEY")
+    site = os.environ.get("ZULIP_SITE")
 
-    # Optional: cleanup code goes here when the app shuts down
+    if email and api_key and site:
+        return email, api_key, site
 
-app = FastAPI(lifespan=lifespan)
+    # Fallback to local config file
+    try:
+        with open("config_localonly.json", "r") as f:
+            cfg = json.load(f)
+            return (
+                cfg["ZULIP_EMAIL"],
+                cfg["ZULIP_API_KEY"],
+                cfg["ZULIP_SITE"]
+            )
+    except Exception as e:
+        print("Error loading Zulip config:", e)
+        raise
 
-@app.get("/ping")
-def ping():
-    return {"status": "alive"}
 
-# -----------------------------
-# Load Zulip client
-# -----------------------------
-try:
-    client = zulip.Client(
-        email=os.environ["ZULIP_EMAIL"],
-        api_key=os.environ["ZULIP_API_KEY"],
-        site=os.environ["ZULIP_SITE"]
-    )
-except Exception as e:
-    print("Error loading client:", e)
-    raise
+ZULIP_EMAIL, ZULIP_API_KEY, ZULIP_SITE = load_zulip_config()
 
-# -----------------------------
-# Constants
-# -----------------------------
+client = zulip.Client(
+    email=ZULIP_EMAIL,
+    api_key=ZULIP_API_KEY,
+    site=ZULIP_SITE
+)
+
+# ============================================================
+#  CONSTANTS
+# ============================================================
+
 TARGET_USER_ID = 1003298
 NOTIFY_USER = "user1003296@spfr.zulipchat.com"
 
@@ -54,22 +55,27 @@ TARGET_USER_EMAIL = "user1003298@spfr.zulipchat.com"
 
 STATE_FILE = "presence.json"
 
-# -----------------------------
-# Presence State Management
-# -----------------------------
+
+# ============================================================
+#  STATE MANAGEMENT
+# ============================================================
+
 def load_previous_state():
     if not os.path.exists(STATE_FILE):
         return {"last_status": None}
     with open(STATE_FILE, "r") as f:
         return json.load(f)
 
+
 def save_state(state):
     with open(STATE_FILE, "w") as f:
         json.dump(state, f)
 
-# -----------------------------
-# Presence Checking
-# -----------------------------
+
+# ============================================================
+#  PRESENCE CHECKING
+# ============================================================
+
 def get_user_presence(user_id):
     result = client.call_endpoint(
         url=f"/users/{user_id}/presence",
@@ -83,6 +89,7 @@ def get_user_presence(user_id):
     aggregated = presence.get("aggregated", {})
     return aggregated.get("status")  # "active", "idle", "offline"
 
+
 def send_presence_notification():
     content = "IsNowActive"
     client.send_message({
@@ -92,13 +99,14 @@ def send_presence_notification():
     })
     print("Notification:", content)
 
-# -----------------------------
-# Heartbeat Thread
-# -----------------------------
+
+# ============================================================
+#  HEARTBEAT LOOP
+# ============================================================
+
 def send_heartbeat_loop():
     last_sent_hour = None
-    # Heartbeat schedule in JST
-    allowed_hours = {7, 10, 13, 16, 19, 22}
+    allowed_hours = {7, 10, 13, 16, 19, 22}  # JST hours
 
     while True:
         now_utc = datetime.now(timezone.utc)
@@ -107,7 +115,6 @@ def send_heartbeat_loop():
         hour = now_jst.hour
         minute = now_jst.minute
 
-        # Send only at exact hour, minute 0, and only if in allowed schedule
         if hour in allowed_hours and minute == 0:
             if last_sent_hour != hour:
                 content = (
@@ -127,9 +134,11 @@ def send_heartbeat_loop():
 
         time.sleep(60)
 
-# -----------------------------
-# Zulip Message Event Handler
-# -----------------------------
+
+# ============================================================
+#  ZULIP EVENT HANDLER
+# ============================================================
+
 def handle_event(event):
     if event["type"] != "message":
         return
@@ -150,7 +159,7 @@ def handle_event(event):
         and msg.get("sender_email") == TARGET_USER_EMAIL
     ):
         try:
-            result = client.send_message({
+            client.send_message({
                 "type": "private",
                 "to": [NOTIFY_USER],
                 "content": "Alert: Join Teams Meeting",
@@ -159,16 +168,17 @@ def handle_event(event):
         except Exception as e:
             print("Error sending meeting alert:", e)
 
-# -----------------------------
-# Presence Polling Loop
-# -----------------------------
+
+# ============================================================
+#  PRESENCE MONITOR LOOP
+# ============================================================
+
 def presence_monitor_loop():
     state = load_previous_state()
     last_status = state.get("last_status")
 
     while True:
         current_status = get_user_presence(TARGET_USER_ID)
-        # print("Current status:", current_status)
 
         if current_status == "active" and last_status != "active":
             send_presence_notification()
@@ -179,3 +189,32 @@ def presence_monitor_loop():
         last_status = current_status
         time.sleep(60)
 
+
+# ============================================================
+#  FASTAPI LIFESPAN (STARTUP THREADS)
+# ============================================================
+
+@asynccontextmanager
+async def lifespan(app):
+    print("Starting background threads...")
+
+    threading.Thread(target=send_heartbeat_loop, daemon=True).start()
+    threading.Thread(target=presence_monitor_loop, daemon=True).start()
+    threading.Thread(
+        target=lambda: client.call_on_each_event(handle_event, event_types=["message"]),
+        daemon=True
+    ).start()
+
+    yield  # App is now ready
+
+
+# ============================================================
+#  FASTAPI APP
+# ============================================================
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/ping")
+def ping():
+    return {"status": "alive"}
