@@ -1,1 +1,1 @@
-worker: python alert.py
+web: uvicorn alert:app --host 0.0.0.0 --port 8000

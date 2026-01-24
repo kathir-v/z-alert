@@ -5,6 +5,13 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/ping")
+def ping():
+    return {"status": "alive"}
 
 # -----------------------------
 # Load Zulip client
