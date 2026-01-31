@@ -1,5 +1,6 @@
 import os
 import json
+import time
 from datetime import datetime, timedelta, timezone
 
 import zulip
@@ -60,8 +61,8 @@ def fetch_bot_direct_messages(anchor):
     try:
         result = client.get_messages({
             "anchor": anchor,
-            "num_before": 200,
-            "num_after": 0,
+            "num_before": 0,      # <-- changed: fetch newer messages
+            "num_after": 200,     # <-- changed: move forward in time
             "narrow": [
                 {"operator": "sender", "operand": BOT_SENDER},
                 {"operator": "is", "operand": "private"},
@@ -87,7 +88,8 @@ def delete_old_messages():
     now = datetime.now(timezone.utc)
     cutoff = now - DELETE_OLDER_THAN
 
-    anchor = "newest"
+    # Start from the oldest possible anchor
+    anchor = 0                     # <-- changed: begin at oldest messages
     total_deleted = 0
 
     while True:
@@ -98,8 +100,8 @@ def delete_old_messages():
 
         print(f"Fetched {len(messages)} messages at anchor={anchor}")
 
-        # Oldest message ID in this batch (for pagination)
-        oldest_id = messages[0]["id"]
+        # NEWEST message ID in this batch (for forward pagination)
+        newest_id = messages[-1]["id"]   # <-- changed: move forward
 
         batch_deleted = 0
 
@@ -107,6 +109,9 @@ def delete_old_messages():
             ts = datetime.fromtimestamp(msg["timestamp"], timezone.utc)
 
             if ts < cutoff:
+                # Introduce a delay to avoid hitting zulips rate limit
+                time.sleep(0.15)
+
                 msg_id = msg["id"]
                 try:
                     result = client.call_endpoint(
@@ -124,12 +129,15 @@ def delete_old_messages():
 
         print(f"Deleted in this batch: {batch_deleted}")
 
-        # Pagination: move anchor to the oldest message ID
-        anchor = oldest_id
+        # Pagination: move anchor to the newest message ID
+        anchor = newest_id          # <-- changed: move forward in time
 
         # If fewer than 200 messages returned, we reached the end
         if len(messages) < 200:
             break
+
+        # Delay the fetch of next batch of 200 records by 10s
+        time.sleep(10)
 
     print(f"Total deleted: {total_deleted}")
 
