@@ -49,19 +49,17 @@ DELETE_OLDER_THAN = timedelta(hours=24)
 
 
 # ============================================================
-#  FETCH BOT-SENT DIRECT MESSAGES
+#  FETCH BOT-SENT DIRECT MESSAGES (PAGINATED)
 # ============================================================
 
-def fetch_bot_direct_messages():
+def fetch_bot_direct_messages(anchor):
     """
-    Fetches recent direct messages sent by the bot.
-    Zulip requires narrowing by 'sender' and 'pm-with'.
-    Since you said the bot sends DMs only to you, we can
-    simply narrow by sender=BOT_SENDER and type=private.
+    Fetches up to 200 direct messages sent by the bot,
+    anchored at the given message ID or 'newest'.
     """
     try:
         result = client.get_messages({
-            "anchor": "newest",
+            "anchor": anchor,
             "num_before": 200,
             "num_after": 0,
             "narrow": [
@@ -82,37 +80,58 @@ def fetch_bot_direct_messages():
 
 
 # ============================================================
-#  DELETE OLD MESSAGES
+#  DELETE OLD MESSAGES (WITH PAGINATION)
 # ============================================================
 
 def delete_old_messages():
     now = datetime.now(timezone.utc)
     cutoff = now - DELETE_OLDER_THAN
 
-    messages = fetch_bot_direct_messages()
-    print(f"Fetched {len(messages)} direct messages sent by bot.")
+    anchor = "newest"
+    total_deleted = 0
 
-    deleted_count = 0
+    while True:
+        messages = fetch_bot_direct_messages(anchor)
 
-    for msg in messages:
-        ts = datetime.fromtimestamp(msg["timestamp"], timezone.utc)
+        if not messages:
+            break
 
-        if ts < cutoff:
-            msg_id = msg["id"]
-            try:
-                result = client.call_endpoint(
-                    url=f"/messages/{msg_id}",
-                    method="DELETE"
-                )
-                if result["result"] == "success":
-                    # print(f"Deleted message {msg_id} from {ts.isoformat()}")
-                    deleted_count += 1
-                else:
-                    print(f"Failed to delete message {msg_id}: {result}")
-            except Exception as e:
-                print(f"Error deleting message {msg_id}:", e)
+        print(f"Fetched {len(messages)} messages at anchor={anchor}")
 
-    print(f"Total deleted: {deleted_count}")
+        # Oldest message ID in this batch (for pagination)
+        oldest_id = messages[0]["id"]
+
+        batch_deleted = 0
+
+        for msg in messages:
+            ts = datetime.fromtimestamp(msg["timestamp"], timezone.utc)
+
+            if ts < cutoff:
+                msg_id = msg["id"]
+                try:
+                    result = client.call_endpoint(
+                        url=f"/messages/{msg_id}",
+                        method="DELETE"
+                    )
+                    if result["result"] == "success":
+                        batch_deleted += 1
+                    else:
+                        print(f"Failed to delete message {msg_id}: {result}")
+                except Exception as e:
+                    print(f"Error deleting message {msg_id}:", e)
+
+        total_deleted += batch_deleted
+
+        print(f"Deleted in this batch: {batch_deleted}")
+
+        # Pagination: move anchor to the oldest message ID
+        anchor = oldest_id
+
+        # If fewer than 200 messages returned, we reached the end
+        if len(messages) < 200:
+            break
+
+    print(f"Total deleted: {total_deleted}")
 
 
 # ============================================================
