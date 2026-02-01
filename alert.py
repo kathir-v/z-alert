@@ -29,12 +29,12 @@ def load_zulip_config():
     email = os.environ.get("ZULIP_EMAIL")
     api_key = os.environ.get("ZULIP_API_KEY")
     site = os.environ.get("ZULIP_SITE")
-    TARGET_BOT_EMAIL = os.environ.get("TARGET_BOT_EMAIL")
-    TARGET_BOT_API_KEY = os.environ.get("TARGET_BOT_API_KEY")
+    TARGET_USER_EMAIL = os.environ.get("TARGET_USER_EMAIL")
+    TARGET_USER_API_KEY = os.environ.get("TARGET_USER_API_KEY")
 
-    if email and api_key and site and TARGET_BOT_EMAIL and TARGET_BOT_API_KEY:
+    if email and api_key and site and TARGET_USER_EMAIL and TARGET_USER_API_KEY:
         log("Loaded Zulip config from environment variables.")
-        return email, api_key, site, TARGET_BOT_EMAIL, TARGET_BOT_API_KEY
+        return email, api_key, site, TARGET_USER_EMAIL, TARGET_USER_API_KEY
 
     try:
         with open("config_localonly.json", "r") as f:
@@ -44,15 +44,15 @@ def load_zulip_config():
                 cfg["ZULIP_EMAIL"],
                 cfg["ZULIP_API_KEY"],
                 cfg["ZULIP_SITE"],
-                cfg["TARGET_BOT_EMAIL"],
-                cfg["TARGET_BOT_API_KEY"]
+                cfg["TARGET_USER_EMAIL"],
+                cfg["TARGET_USER_API_KEY"]
             )
     except Exception as e:
         print("Error loading Zulip config:", e)
         raise
 
 
-ZULIP_EMAIL, ZULIP_API_KEY, ZULIP_SITE, TARGET_BOT_EMAIL, TARGET_BOT_API_KEY = load_zulip_config()
+ZULIP_EMAIL, ZULIP_API_KEY, ZULIP_SITE, TARGET_USER_EMAIL, TARGET_USER_API_KEY = load_zulip_config()
 
 client = zulip.Client(
     email=ZULIP_EMAIL,
@@ -61,8 +61,8 @@ client = zulip.Client(
 )
 
 target_client = zulip.Client(
-    email=TARGET_BOT_EMAIL,
-    api_key=TARGET_BOT_API_KEY,
+    email=TARGET_USER_EMAIL,
+    api_key=TARGET_USER_API_KEY,
     site=ZULIP_SITE
 )
 
