@@ -29,10 +29,12 @@ def load_zulip_config():
     email = os.environ.get("ZULIP_EMAIL")
     api_key = os.environ.get("ZULIP_API_KEY")
     site = os.environ.get("ZULIP_SITE")
+    TARGET_BOT_EMAIL = os.environ.get("TARGET_BOT_EMAIL")
+    TARGET_BOT_API_KEY = os.environ.get("TARGET_BOT_API_KEY")
 
-    if email and api_key and site:
+    if email and api_key and site and TARGET_BOT_EMAIL and TARGET_BOT_API_KEY:
         log("Loaded Zulip config from environment variables.")
-        return email, api_key, site
+        return email, api_key, site, TARGET_BOT_EMAIL, TARGET_BOT_API_KEY
 
     try:
         with open("config_localonly.json", "r") as f:
@@ -41,18 +43,26 @@ def load_zulip_config():
             return (
                 cfg["ZULIP_EMAIL"],
                 cfg["ZULIP_API_KEY"],
-                cfg["ZULIP_SITE"]
+                cfg["ZULIP_SITE"],
+                cfg["TARGET_BOT_EMAIL"],
+                cfg["TARGET_BOT_API_KEY"]
             )
     except Exception as e:
         print("Error loading Zulip config:", e)
         raise
 
 
-ZULIP_EMAIL, ZULIP_API_KEY, ZULIP_SITE = load_zulip_config()
+ZULIP_EMAIL, ZULIP_API_KEY, ZULIP_SITE, TARGET_BOT_EMAIL, TARGET_BOT_API_KEY = load_zulip_config()
 
 client = zulip.Client(
     email=ZULIP_EMAIL,
     api_key=ZULIP_API_KEY,
+    site=ZULIP_SITE
+)
+
+target_client = zulip.Client(
+    email=TARGET_BOT_EMAIL,
+    api_key=TARGET_BOT_API_KEY,
     site=ZULIP_SITE
 )
 
@@ -212,11 +222,11 @@ def presence_monitor_loop():
 
 
 # ============================================================
-#  UNREAD COUNT NOTIFICATION
+#  UNREAD COUNT NOTIFICATION (for the TARGET USER)
 # ============================================================
 
 def get_unread_count(stream, topic):
-    result = client.get_messages({
+    result = target_client.get_messages({
         "anchor": "newest",
         "num_before": 0,
         "num_after": 500,
@@ -228,11 +238,11 @@ def get_unread_count(stream, topic):
     })
 
     if result["result"] != "success":
-        print("Error fetching unread messages:", result)
+        print("Error fetching unread messages (TARGET_USER bot):", result)
         return 0
 
     unread = len(result.get("messages", []))
-    log(f"Unread count for {stream}/{topic}: {unread}")
+    log(f"[TARGET_USER] Unread count for {stream}/{topic}: {unread}")
     return unread
 
 
