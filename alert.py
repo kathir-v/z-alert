@@ -222,58 +222,65 @@ def presence_monitor_loop():
 
 
 # ============================================================
-#  UNREAD COUNT NOTIFICATION (for the TARGET USER)
+#  MSG COUNT NOTIFICATION (for the TARGET USER)
 # ============================================================
 
-def get_unread_count(stream, topic):
+def get_messages_last_15_minutes(stream, topic):
     try:
         result = target_client.get_messages({
             "anchor": "newest",
-            "num_before": 0,
-            "num_after": 500,
+            "num_before": 200,
+            "num_after": 0,
             "narrow": [
                 {"operator": "stream", "operand": stream},
                 {"operator": "topic", "operand": topic},
-                {"operator": "is", "operand": "unread"},
             ],
         })
     except Exception as e:
-        log(f"[ERROR] Unread count fetch failed due to network/API error: {e}")
-        return None  # Signal failure to caller
+        log(f"[ERROR] Failed to fetch messages: {e}")
+        return None
 
     if result.get("result") != "success":
         log(f"[ERROR] Zulip returned failure: {result}")
         return None
 
-    unread = len(result.get("messages", []))
-    log(f"[TARGET_USER] Unread count for {stream}/{topic}: {unread}")
-    return unread
+    now_utc = datetime.now(timezone.utc)
+    cutoff = now_utc.timestamp() - (15 * 60)
+
+    recent_msgs = [
+        m for m in result.get("messages", [])
+        if m["timestamp"] >= cutoff
+    ]
+
+    count = len(recent_msgs)
+    log(f"[TARGET_USER] Messages in last 15 minutes for {stream}/{topic}: {count}")
+    return count
 
 
-def notify_unread_count():
-    unread = get_unread_count(TARGET_STREAM, TARGET_TOPIC)
+def notify_recent_message_count():
+    count = get_messages_last_15_minutes(TARGET_STREAM, TARGET_TOPIC)
 
-    if unread is None:
-        log("Skipping unread notification due to API failure.")
+    if count is None:
+        log("Skipping recent message notification due to API failure.")
         return
 
-    if unread > 0:
+    if count > 0:
         try:
             client.send_message({
                 "type": "private",
                 "to": [TARGET_USER_EMAIL],
-                "content": f"{unread} online order(s) received.",
+                "content": f"{count} Incident(s).",
             })
 
             client.send_message({
                 "type": "private",
                 "to": [NOTIFY_USER],
-                "content": f"{unread} online order(s) received.",
+                "content": f"{count} Incident(s).",
             })
 
-            log(f"Unread notification sent to both users: {unread}")
+            log(f"Recent message notification sent: {count}")
         except Exception as e:
-            log(f"[ERROR] Failed to send unread notification: {e}")
+            log(f"[ERROR] Failed to send recent message notification: {e}")
 
 
 # ============================================================
@@ -350,7 +357,7 @@ def broadcast_random_messages():
 #  15-MINUTE CLOCK-ALIGNED LOOP
 # ============================================================
 
-def unread_msg_count():
+def check_recent_messages_loop():
     while True:
         now_utc = datetime.now(timezone.utc)
         now_jst = now_utc + timedelta(hours=9)
@@ -363,7 +370,7 @@ def unread_msg_count():
             log(f"15-minute trigger at {now_jst.strftime('%H:%M')} JST")
 
             if 6 <= hour <= 23:
-                notify_unread_count()
+                notify_recent_message_count()
                 broadcast_random_messages()
 
             time.sleep(60)
@@ -385,7 +392,7 @@ async def lifespan(app):
         target=lambda: client.call_on_each_event(handle_event, event_types=["message"]),
         daemon=True
     ).start()
-    threading.Thread(target=unread_msg_count, daemon=True).start()
+    threading.Thread(target=check_recent_messages_loop, daemon=True).start()
 
     yield
 
