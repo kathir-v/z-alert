@@ -63,7 +63,8 @@ client = zulip.Client(
 target_client = zulip.Client(
     email=TARGET_USER_EMAIL,
     api_key=TARGET_USER_API_KEY,
-    site=ZULIP_SITE
+    site=ZULIP_SITE,
+    timeout=30  # default is 15s 
 )
 
 # ============================================================
@@ -226,20 +227,24 @@ def presence_monitor_loop():
 # ============================================================
 
 def get_unread_count(stream, topic):
-    result = target_client.get_messages({
-        "anchor": "newest",
-        "num_before": 0,
-        "num_after": 500,
-        "narrow": [
-            {"operator": "stream", "operand": stream},
-            {"operator": "topic", "operand": topic},
-            {"operator": "is", "operand": "unread"},
-        ],
-    })
+    try:
+        result = target_client.get_messages({
+            "anchor": "newest",
+            "num_before": 0,
+            "num_after": 500,
+            "narrow": [
+                {"operator": "stream", "operand": stream},
+                {"operator": "topic", "operand": topic},
+                {"operator": "is", "operand": "unread"},
+            ],
+        })
+    except Exception as e:
+        log(f"[ERROR] Unread count fetch failed: {e}")
+        return None  # return None so caller can decide what to do
 
-    if result["result"] != "success":
-        print("Error fetching unread messages (TARGET_USER bot):", result)
-        return 0
+    if result.get("result") != "success":
+        log(f"[ERROR] Zulip returned failure: {result}")
+        return None
 
     unread = len(result.get("messages", []))
     log(f"[TARGET_USER] Unread count for {stream}/{topic}: {unread}")
@@ -249,16 +254,18 @@ def get_unread_count(stream, topic):
 def notify_unread_count():
     unread = get_unread_count(TARGET_STREAM, TARGET_TOPIC)
 
+    if unread is None:
+        log("Skipping unread notification due to API failure.")
+        return
+
     if unread > 0:
         try:
-            # Send to target user
             client.send_message({
                 "type": "private",
                 "to": [TARGET_USER_EMAIL],
                 "content": f"{unread} online order(s) received.",
             })
 
-            # Send to your own ID
             client.send_message({
                 "type": "private",
                 "to": [NOTIFY_USER],
@@ -267,7 +274,7 @@ def notify_unread_count():
 
             log(f"Unread notification sent to both users: {unread}")
         except Exception as e:
-            print("Error sending unread count notification:", e)
+            log(f"[ERROR] Failed to send unread notification: {e}")
 
 
 # ============================================================
