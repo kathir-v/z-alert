@@ -128,7 +128,7 @@ def send_presence_notification():
         "to": [NOTIFY_USER],
         "content": content,
     })
-    log("Presence notification sent.")
+    print("Notification:", content)
 
 
 # ============================================================
@@ -158,7 +158,7 @@ def send_heartbeat_loop():
                         "to": [NOTIFY_USER],
                         "content": content,
                     })
-                    log(f"Heartbeat sent at hour {hour}.")
+                    print(f"Heartbeat sent at hour {hour}.")
                     last_sent_hour = hour
                 except Exception as e:
                     print("Error sending heartbeat:", e)
@@ -195,7 +195,7 @@ def handle_event(event):
                 "to": [NOTIFY_USER],
                 "content": "Alert: Join Teams Meeting",
             })
-            log("Meeting alert sent.")
+            print("Notification: Message")
         except Exception as e:
             print("Error sending meeting alert:", e)
 
@@ -222,7 +222,7 @@ def presence_monitor_loop():
 
 
 # ============================================================
-#  MSG COUNT NOTIFICATION (for the TARGET USER)
+#  MSG COUNT NOTIFICATION (for the TARGET USER in the last 15m)
 # ============================================================
 
 def get_messages_last_15_minutes(stream, topic):
