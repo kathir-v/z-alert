@@ -4,6 +4,7 @@ import time
 import threading
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
+import random
 
 import zulip
 from fastapi import FastAPI
@@ -54,6 +55,7 @@ TARGET_TOPIC = "Txt"
 TARGET_USER_EMAIL = "user1003298@spfr.zulipchat.com"
 
 STATE_FILE = "presence.json"
+MESSAGES_FILE = "messages.txt"
 
 
 # ============================================================
@@ -191,6 +193,141 @@ def presence_monitor_loop():
 
 
 # ============================================================
+#  UNREAD COUNT NOTIFICATION
+# ============================================================
+
+def get_unread_count(stream, topic):
+    result = client.get_messages({
+        "anchor": "newest",
+        "num_before": 0,
+        "num_after": 500,
+        "narrow": [
+            {"operator": "stream", "operand": stream},
+            {"operator": "topic", "operand": topic},
+            {"operator": "is", "operand": "unread"},
+        ],
+    })
+
+    if result["result"] != "success":
+        print("Error fetching unread messages:", result)
+        return 0
+
+    return len(result.get("messages", []))
+
+
+def notify_unread_count():
+    unread = get_unread_count(TARGET_STREAM, TARGET_TOPIC)
+
+    if unread > 0:
+        try:
+            # Send to the target user
+            client.send_message({
+                "type": "private",
+                "to": [TARGET_USER_EMAIL],
+                "content": f"{unread} incident(s).",
+            })
+
+            # Send to your own ID as well
+            client.send_message({
+                "type": "private",
+                "to": [NOTIFY_USER],
+                "content": f"{unread} incident(s).",
+            })
+
+        except Exception as e:
+            print("Error sending unread count notification:", e)
+
+
+# ============================================================
+#  RANDOM MESSAGE BROADCASTER
+# ============================================================
+
+def load_random_messages():
+    if not os.path.exists(MESSAGES_FILE):
+        return []
+    with open(MESSAGES_FILE, "r", encoding="utf-8") as f:
+        return [line.strip() for line in f if line.strip()]
+
+
+def get_subscribed_streams():
+    result = client.get_subscriptions()
+    if result["result"] != "success":
+        print("Error fetching subscriptions:", result)
+        return []
+    return result["subscriptions"]
+
+
+def get_topics_for_stream(stream_id):
+    result = client.get_stream_topics(stream_id)
+    if result["result"] != "success":
+        print("Error fetching topics:", result)
+        return []
+    return [t["name"] for t in result["topics"]]
+
+
+def broadcast_random_messages():
+    # Load messages from file
+    messages = load_random_messages()
+    if not messages:
+        return
+
+    # Pick 3 random messages
+    chosen_msgs = random.sample(messages, min(3, len(messages)))
+
+    # Get subscribed streams
+    subs = get_subscribed_streams()
+    if not subs:
+        return
+
+    # Pick 3 random streams
+    chosen_streams = random.sample(subs, min(3, len(subs)))
+
+    # For each stream, pick a random topic and send the corresponding message
+    for idx, stream in enumerate(chosen_streams):
+        topics = get_topics_for_stream(stream["stream_id"])
+        if not topics:
+            continue  # Skip if no topics exist
+
+        topic = random.choice(topics)
+        msg = chosen_msgs[idx]  # message 0 → stream 0, message 1 → stream 1, etc.
+
+        try:
+            client.send_message({
+                "type": "stream",
+                "to": stream["name"],
+                "subject": topic,
+                "content": msg,
+            })
+            # print(f"Sent message[{idx}] to {stream['name']} / {topic}")
+        except Exception as e:
+            print("Error sending random message:", e)
+
+
+# ============================================================
+#  15-MINUTE LOOP (UNREAD COUNT + RANDOM BROADCAST)
+# ============================================================
+
+def unread_msg_count():
+    while True:
+        now_utc = datetime.now(timezone.utc)
+        now_jst = now_utc + timedelta(hours=9)
+
+        hour = now_jst.hour
+        minute = now_jst.minute
+
+        # Run exactly at :00, :15, :30, :45
+        if 6 <= hour <= 23 and minute in {0, 15, 30, 45}:
+            notify_unread_count()
+            broadcast_random_messages()
+
+            # Prevent double‑triggering within the same minute
+            time.sleep(60)
+
+        # Sleep until the next minute boundary
+        time.sleep(1)
+
+
+# ============================================================
 #  FASTAPI LIFESPAN (STARTUP THREADS)
 # ============================================================
 
@@ -204,6 +341,7 @@ async def lifespan(app):
         target=lambda: client.call_on_each_event(handle_event, event_types=["message"]),
         daemon=True
     ).start()
+    threading.Thread(target=unread_msg_count, daemon=True).start()
 
     yield  # App is now ready
 
