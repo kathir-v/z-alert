@@ -63,8 +63,7 @@ client = zulip.Client(
 target_client = zulip.Client(
     email=TARGET_USER_EMAIL,
     api_key=TARGET_USER_API_KEY,
-    site=ZULIP_SITE,
-    timeout=30  # default is 15s 
+    site=ZULIP_SITE
 )
 
 # ============================================================
@@ -239,8 +238,8 @@ def get_unread_count(stream, topic):
             ],
         })
     except Exception as e:
-        log(f"[ERROR] Unread count fetch failed: {e}")
-        return None  # return None so caller can decide what to do
+        log(f"[ERROR] Unread count fetch failed due to network/API error: {e}")
+        return None  # Signal failure to caller
 
     if result.get("result") != "success":
         log(f"[ERROR] Zulip returned failure: {result}")
