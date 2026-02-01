@@ -342,8 +342,8 @@ def unread_msg_count():
         hour = now_jst.hour
         minute = now_jst.minute
 
-        if True:
-        # if minute in {0, 15, 30, 45}:
+        # if True:
+        if minute in {0, 15, 30, 45}:
             log(f"15-minute trigger at {now_jst.strftime('%H:%M')} JST")
 
             if 6 <= hour <= 23:
