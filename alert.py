@@ -371,7 +371,8 @@ def check_recent_messages_loop():
 
             if 6 <= hour <= 23:
                 notify_recent_message_count()
-                broadcast_random_messages()
+                if minute in {30}:
+                    broadcast_random_messages()
 
             time.sleep(60)
 
