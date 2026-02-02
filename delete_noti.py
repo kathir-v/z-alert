@@ -55,6 +55,8 @@ STREAM_DELETE_OLDER_THAN = timedelta(days=3)
 EXCLUDED_STREAM = "spring"
 EXCLUDED_TOPIC = "Txt"
 
+# To send a summary notification to me
+NOTIFY_USER_EMAIL = "user1003296@spfr.zulipchat.com"
 
 # ============================================================
 #  FETCH ALL BOT-SENT MESSAGES (PAGINATED)
@@ -208,6 +210,27 @@ def run_cleanup():
     print(f"Total DIRECT messages deleted: {total_dm_deleted}")
     print(f"Total STREAM messages deleted: {total_stream_deleted}")
     print("Cleanup complete.")
+
+    # Send Slack-style summary DM
+    send_summary_dm(total_dm_deleted, total_stream_deleted)
+
+
+def send_summary_dm(dm_deleted, stream_deleted):
+    summary = (
+        "🧹*Daily Cleanup Report*\n"
+        f"DM removed: {dm_deleted}\n"
+        f"Stream removed: {stream_deleted}"
+    )
+
+    try:
+        client.send_message({
+            "type": "private",
+            "to": [NOTIFY_USER_EMAIL],
+            "content": summary,
+        })
+        print("Summary DM sent.")
+    except Exception as e:
+        print("Failed to send summary DM:", e)
 
 
 # ============================================================
