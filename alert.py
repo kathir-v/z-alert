@@ -272,11 +272,14 @@ def notify_recent_message_count():
                 "content": f"{count} Incident(s).",
             })
 
+            # removing the notification to this user
+            '''
             client.send_message({
                 "type": "private",
                 "to": [NOTIFY_USER],
                 "content": f"{count} Incident(s).",
             })
+            '''
 
             log(f"Recent message notification sent: {count}")
         except Exception as e:
