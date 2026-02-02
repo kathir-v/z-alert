@@ -45,8 +45,8 @@ client = zulip.Client(
 # Delete only messages sent BY this bot ("noti")
 BOT_SENDER = ZULIP_EMAIL
 
-# DM deletion threshold: 24 hours
-DM_DELETE_OLDER_THAN = timedelta(hours=24)
+# DM deletion threshold: 48 hours
+DM_DELETE_OLDER_THAN = timedelta(hours=48)
 
 # Stream deletion threshold: 3 days
 STREAM_DELETE_OLDER_THAN = timedelta(days=3)
@@ -57,12 +57,13 @@ EXCLUDED_TOPIC = "Txt"
 
 
 # ============================================================
-#  FETCH BOT-SENT DIRECT MESSAGES (PAGINATED)
+#  FETCH ALL BOT-SENT MESSAGES (PAGINATED)
+#  (Correct narrow: sender only)
 # ============================================================
 
-def fetch_bot_direct_messages(anchor):
+def fetch_bot_messages(anchor):
     """
-    Fetches up to 200 direct messages sent by the bot,
+    Fetches up to 200 messages sent by the bot (DM + stream),
     anchored at the given message ID or 'newest'.
     """
     try:
@@ -71,175 +72,142 @@ def fetch_bot_direct_messages(anchor):
             "num_before": 200,
             "num_after": 0,
             "narrow": [
-                {"operator": "sender", "operand": BOT_SENDER},
-                {"operator": "is", "operand": "private"},
+                {"operator": "sender", "operand": BOT_SENDER}
             ]
         })
 
         if result["result"] != "success":
-            print("Error fetching DM messages:", result)
+            print("Error fetching messages:", result)
             return []
 
         return result["messages"]
 
     except Exception as e:
-        print("Error in fetch_bot_direct_messages:", e)
+        print("Error in fetch_bot_messages:", e)
         return []
 
 
 # ============================================================
-#  DELETE OLD DIRECT MESSAGES (24 HOURS)
+#  DELETE OLD DIRECT MESSAGES (48 HOURS)
 # ============================================================
 
-def delete_old_direct_messages():
+def delete_old_direct_messages(messages):
     now = datetime.now(timezone.utc)
     cutoff = now - DM_DELETE_OLDER_THAN
 
-    anchor = "newest"
-    total_deleted = 0
+    deleted = 0
 
-    print("\n=== Deleting old DIRECT MESSAGES from noti (older than 24 hours) ===")
+    for msg in messages:
+        if msg["type"] != "private":
+            continue
 
-    while True:
-        messages = fetch_bot_direct_messages(anchor)
+        ts = datetime.fromtimestamp(msg["timestamp"], timezone.utc)
 
-        if not messages:
-            break
+        if ts < cutoff:
+            time.sleep(0.15)
+            msg_id = msg["id"]
 
-        print(f"Fetched {len(messages)} DM messages at anchor={anchor}")
+            try:
+                result = client.call_endpoint(
+                    url=f"/messages/{msg_id}",
+                    method="DELETE"
+                )
+                if result["result"] == "success":
+                    deleted += 1
+                else:
+                    print(f"Failed to delete DM {msg_id}: {result}")
+            except Exception as e:
+                print(f"Error deleting DM {msg_id}:", e)
 
-        oldest_id = messages[0]["id"]
-        batch_deleted = 0
-
-        for msg in messages:
-            ts = datetime.fromtimestamp(msg["timestamp"], timezone.utc)
-
-            if ts < cutoff:
-                time.sleep(0.15)
-                msg_id = msg["id"]
-
-                try:
-                    result = client.call_endpoint(
-                        url=f"/messages/{msg_id}",
-                        method="DELETE"
-                    )
-                    if result["result"] == "success":
-                        batch_deleted += 1
-                    else:
-                        print(f"Failed to delete DM {msg_id}: {result}")
-                except Exception as e:
-                    print(f"Error deleting DM {msg_id}:", e)
-
-        total_deleted += batch_deleted
-        print(f"Deleted in this DM batch: {batch_deleted}")
-
-        anchor = oldest_id
-
-        if len(messages) < 200:
-            break
-
-        print("Waiting 60 seconds before next DM batch...")
-        time.sleep(60)
-
-    print(f"Total DIRECT MESSAGES deleted: {total_deleted}")
-
-
-# ============================================================
-#  FETCH ALL BOT-SENT STREAM MESSAGES (PAGINATED)
-#  (Optimized: fetch ALL streams at once, not per-stream)
-# ============================================================
-
-def fetch_bot_stream_messages(anchor):
-    """
-    Fetches up to 200 stream messages sent by the bot,
-    anchored at the given message ID or 'newest'.
-    """
-    try:
-        result = client.get_messages({
-            "anchor": anchor,
-            "num_before": 200,
-            "num_after": 0,
-            "narrow": [
-                {"operator": "sender", "operand": BOT_SENDER},
-                {"operator": "is", "operand": "stream"},
-            ]
-        })
-
-        if result["result"] != "success":
-            print("Error fetching stream messages:", result)
-            return []
-
-        return result["messages"]
-
-    except Exception as e:
-        print("Error in fetch_bot_stream_messages:", e)
-        return []
+    return deleted
 
 
 # ============================================================
 #  DELETE OLD STREAM MESSAGES (3 DAYS)
-#  (Optimized: single unified fetch, skip spring/Txt)
+#  (Skip spring/Txt)
 # ============================================================
 
-def delete_old_stream_messages():
+def delete_old_stream_messages(messages):
     now = datetime.now(timezone.utc)
     cutoff = now - STREAM_DELETE_OLDER_THAN
 
-    print("\n=== Deleting old STREAM MESSAGES from noti (older than 3 days) ===")
-    print(f"Excluding stream/topic: {EXCLUDED_STREAM}/{EXCLUDED_TOPIC}")
+    deleted = 0
+
+    for msg in messages:
+        if msg["type"] != "stream":
+            continue
+
+        stream_name = msg.get("display_recipient")
+        topic = msg.get("subject")
+
+        # Skip excluded stream/topic
+        if stream_name == EXCLUDED_STREAM and topic == EXCLUDED_TOPIC:
+            continue
+
+        ts = datetime.fromtimestamp(msg["timestamp"], timezone.utc)
+
+        if ts < cutoff:
+            time.sleep(0.15)
+            msg_id = msg["id"]
+
+            try:
+                result = client.call_endpoint(
+                    url=f"/messages/{msg_id}",
+                    method="DELETE"
+                )
+                if result["result"] == "success":
+                    deleted += 1
+                else:
+                    print(f"Failed to delete stream message {msg_id}: {result}")
+            except Exception as e:
+                print(f"Error deleting stream message {msg_id}:", e)
+
+    return deleted
+
+
+# ============================================================
+#  MAIN CLEANUP LOOP (Unified Pagination)
+# ============================================================
+
+def run_cleanup():
+    print("Starting cleanup worker...")
 
     anchor = "newest"
-    total_deleted = 0
+    total_dm_deleted = 0
+    total_stream_deleted = 0
 
     while True:
-        messages = fetch_bot_stream_messages(anchor)
+        messages = fetch_bot_messages(anchor)
 
         if not messages:
             break
 
-        print(f"Fetched {len(messages)} stream messages at anchor={anchor}")
+        print(f"\nFetched {len(messages)} messages at anchor={anchor}")
 
         oldest_id = messages[0]["id"]
-        batch_deleted = 0
 
-        for msg in messages:
-            stream_name = msg.get("display_recipient")
-            topic = msg.get("subject")
+        # Delete DMs
+        dm_deleted = delete_old_direct_messages(messages)
+        total_dm_deleted += dm_deleted
+        print(f"Deleted {dm_deleted} DIRECT messages in this batch")
 
-            # Skip the excluded stream/topic
-            if stream_name == EXCLUDED_STREAM and topic == EXCLUDED_TOPIC:
-                continue
-
-            ts = datetime.fromtimestamp(msg["timestamp"], timezone.utc)
-
-            if ts < cutoff:
-                time.sleep(0.15)
-                msg_id = msg["id"]
-
-                try:
-                    result = client.call_endpoint(
-                        url=f"/messages/{msg_id}",
-                        method="DELETE"
-                    )
-                    if result["result"] == "success":
-                        batch_deleted += 1
-                    else:
-                        print(f"Failed to delete message {msg_id}: {result}")
-                except Exception as e:
-                    print(f"Error deleting message {msg_id}:", e)
-
-        total_deleted += batch_deleted
-        print(f"Deleted in this stream batch: {batch_deleted}")
+        # Delete stream messages
+        stream_deleted = delete_old_stream_messages(messages)
+        total_stream_deleted += stream_deleted
+        print(f"Deleted {stream_deleted} STREAM messages in this batch")
 
         anchor = oldest_id
 
         if len(messages) < 200:
             break
 
-        print("Waiting 60 seconds before next stream batch...")
+        print("Waiting 60 seconds before next batch...")
         time.sleep(60)
 
-    print(f"\nTotal STREAM MESSAGES deleted: {total_deleted}")
+    print("\n=== CLEANUP SUMMARY ===")
+    print(f"Total DIRECT messages deleted: {total_dm_deleted}")
+    print(f"Total STREAM messages deleted: {total_stream_deleted}")
+    print("Cleanup complete.")
 
 
 # ============================================================
@@ -247,9 +215,4 @@ def delete_old_stream_messages():
 # ============================================================
 
 if __name__ == "__main__":
-    print("Starting cleanup worker...")
-
-    delete_old_direct_messages()
-    delete_old_stream_messages()
-
-    print("Cleanup complete.")
+    run_cleanup()
