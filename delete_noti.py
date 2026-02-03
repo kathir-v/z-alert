@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import time
 from datetime import datetime, timedelta, timezone
@@ -214,7 +215,6 @@ def run_cleanup():
     # Send Slack-style summary DM
     send_summary_dm(total_dm_deleted, total_stream_deleted)
 
-
 def send_summary_dm(dm_deleted, stream_deleted):
     summary = (
         "🧹*Daily Cleanup Report*\n"
@@ -239,3 +239,6 @@ def send_summary_dm(dm_deleted, stream_deleted):
 
 if __name__ == "__main__":
     run_cleanup()
+    client.session.close()
+    import sys
+    sys.exit(0)
