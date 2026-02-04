@@ -80,6 +80,16 @@ TARGET_USER_EMAIL = "user1003298@spfr.zulipchat.com"
 STATE_FILE = "presence.json"
 MESSAGES_FILE = "messages.txt"
 
+# ============================================================
+#  CLEANUP CONSTANTS (from delete_noti.py)
+# ============================================================
+
+BOT_SENDER = ZULIP_EMAIL
+DM_DELETE_OLDER_THAN = timedelta(hours=48)
+STREAM_DELETE_OLDER_THAN = timedelta(days=3)
+EXCLUDED_STREAM = "spring"
+EXCLUDED_TOPIC = "Txt"
+NOTIFY_USER_EMAIL = "user1003296@spfr.zulipchat.com"
 
 # ============================================================
 #  STATE MANAGEMENT
@@ -271,16 +281,6 @@ def notify_recent_message_count():
                 "to": [TARGET_USER_EMAIL],
                 "content": f"{count} Incident(s).",
             })
-
-            # removing the notification to this user
-            '''
-            client.send_message({
-                "type": "private",
-                "to": [NOTIFY_USER],
-                "content": f"{count} Incident(s).",
-            })
-            '''
-
             log(f"Recent message notification sent: {count}")
         except Exception as e:
             log(f"[ERROR] Failed to send recent message notification: {e}")
@@ -348,7 +348,7 @@ def broadcast_random_messages():
         if stream["name"] == TARGET_STREAM and topic == TARGET_TOPIC:
             log(f"Skipping random broadcast to {TARGET_STREAM}/{TARGET_TOPIC}")
             continue
-        
+
         try:
             client.send_message({
                 "type": "stream",
@@ -359,6 +359,144 @@ def broadcast_random_messages():
             log(f"Sent message[{idx}] to {stream['name']} / {topic}")
         except Exception as e:
             print("Error sending random message:", e)
+
+
+# ============================================================
+#  CLEANUP HELPERS (from delete_noti.py)
+# ============================================================
+
+def fetch_bot_messages(anchor):
+    try:
+        result = client.get_messages({
+            "anchor": anchor,
+            "num_before": 200,
+            "num_after": 0,
+            "narrow": [
+                {"operator": "sender", "operand": BOT_SENDER}
+            ]
+        })
+        if result["result"] != "success":
+            print("Error fetching messages:", result)
+            return []
+        return result["messages"]
+    except Exception as e:
+        print("Error in fetch_bot_messages:", e)
+        return []
+
+
+def delete_old_direct_messages(messages):
+    now = datetime.now(timezone.utc)
+    cutoff = now - DM_DELETE_OLDER_THAN
+    deleted = 0
+
+    for msg in messages:
+        if msg["type"] != "private":
+            continue
+
+        ts = datetime.fromtimestamp(msg["timestamp"], timezone.utc)
+        if ts < cutoff:
+            time.sleep(0.15)
+            msg_id = msg["id"]
+            try:
+                result = client.call_endpoint(
+                    url=f"/messages/{msg_id}",
+                    method="DELETE"
+                )
+                if result["result"] == "success":
+                    deleted += 1
+            except Exception as e:
+                print(f"Error deleting DM {msg_id}:", e)
+
+    return deleted
+
+
+def delete_old_stream_messages(messages):
+    now = datetime.now(timezone.utc)
+    cutoff = now - STREAM_DELETE_OLDER_THAN
+    deleted = 0
+
+    for msg in messages:
+        if msg["type"] != "stream":
+            continue
+
+        stream_name = msg.get("display_recipient")
+        topic = msg.get("subject")
+
+        if stream_name == EXCLUDED_STREAM and topic == EXCLUDED_TOPIC:
+            continue
+
+        ts = datetime.fromtimestamp(msg["timestamp"], timezone.utc)
+        if ts < cutoff:
+            time.sleep(0.15)
+            msg_id = msg["id"]
+            try:
+                result = client.call_endpoint(
+                    url=f"/messages/{msg_id}",
+                    method="DELETE"
+                )
+                if result["result"] == "success":
+                    deleted += 1
+            except Exception as e:
+                print(f"Error deleting stream message {msg_id}:", e)
+
+    return deleted
+
+
+def send_cleanup_summary(dm_deleted, stream_deleted):
+    summary = (
+        "🧹*Daily Cleanup Report*\n"
+        f"DM removed: {dm_deleted}\n"
+        f"Stream removed: {stream_deleted}"
+    )
+    try:
+        client.send_message({
+            "type": "private",
+            "to": [NOTIFY_USER_EMAIL],
+            "content": summary,
+        })
+        print("Cleanup summary sent.")
+    except Exception as e:
+        print("Failed to send summary DM:", e)
+
+
+def run_delete_noti():
+    print("Starting cleanup worker (API-triggered)...")
+
+    anchor = "newest"
+    total_dm_deleted = 0
+    total_stream_deleted = 0
+
+    while True:
+        messages = fetch_bot_messages(anchor)
+        if not messages:
+            break
+
+        print(f"Fetched {len(messages)} messages at anchor={anchor}")
+
+        oldest_id = messages[0]["id"]
+
+        dm_deleted = delete_old_direct_messages(messages)
+        total_dm_deleted += dm_deleted
+
+        stream_deleted = delete_old_stream_messages(messages)
+        total_stream_deleted += stream_deleted
+
+        anchor = oldest_id
+
+        if len(messages) < 200:
+            break
+
+        print("Waiting 60 seconds before next batch...")
+        time.sleep(60)
+
+    print("Cleanup complete.")
+    send_cleanup_summary(total_dm_deleted, total_stream_deleted)
+
+    return {
+        "dm_deleted": total_dm_deleted,
+        "stream_deleted": total_stream_deleted
+    }
+
 
 # ============================================================
 #  15-MINUTE CLOCK-ALIGNED LOOP
@@ -372,7 +510,6 @@ def check_recent_messages_loop():
         hour = now_jst.hour
         minute = now_jst.minute
 
-        # if True:
         if minute in {0, 15, 30, 45}:
             log(f"15-minute trigger at {now_jst.strftime('%H:%M')} JST")
 
@@ -415,3 +552,13 @@ app = FastAPI(lifespan=lifespan)
 @app.get("/ping")
 def ping():
     return {"status": "alive"}
+
+
+@app.get("/deletenoti8221")
+def delete_noti_endpoint():
+    result = run_delete_noti()
+    return {
+        "status": "cleanup completed",
+        "dm_deleted": result["dm_deleted"],
+        "stream_deleted": result["stream_deleted"]
+    }
