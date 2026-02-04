@@ -344,6 +344,11 @@ def broadcast_random_messages():
         topic = random.choice(topics)
         msg = chosen_msgs[idx]
 
+        # Skip sending to TARGET_STREAM/TARGET_TOPIC
+        if stream["name"] == TARGET_STREAM and topic == TARGET_TOPIC:
+            log(f"Skipping random broadcast to {TARGET_STREAM}/{TARGET_TOPIC}")
+            continue
+        
         try:
             client.send_message({
                 "type": "stream",
@@ -354,7 +359,6 @@ def broadcast_random_messages():
             log(f"Sent message[{idx}] to {stream['name']} / {topic}")
         except Exception as e:
             print("Error sending random message:", e)
-
 
 # ============================================================
 #  15-MINUTE CLOCK-ALIGNED LOOP
