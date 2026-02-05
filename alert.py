@@ -351,7 +351,7 @@ def mute_target_topic():
     Mutes TARGET_TOPIC under TARGET_STREAM for:
       - SOURCE_USER (source_client)
       - TARGET_USER (target_client)
-    Always sends a mute request; safe to call repeatedly.
+    Uses visibility_policy=1 (muted) per Zulip API.
     """
 
     stream_info = bot_client.get_stream_id(TARGET_STREAM)
@@ -368,7 +368,7 @@ def mute_target_topic():
             request={
                 "stream_id": stream_id,
                 "topic": TARGET_TOPIC,
-                "mute": True
+                "visibility_policy": 1   # REQUIRED by Zulip
             }
         )
 
