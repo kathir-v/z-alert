@@ -26,15 +26,27 @@ def log(msg):
 # ============================================================
 
 def load_zulip_config():
-    email = os.environ.get("ZULIP_EMAIL")
-    api_key = os.environ.get("ZULIP_API_KEY")
+    bot_email = os.environ.get("ZULIP_EMAIL")
+    bot_api_key = os.environ.get("ZULIP_API_KEY")
     site = os.environ.get("ZULIP_SITE")
-    TARGET_USER_EMAIL = os.environ.get("TARGET_USER_EMAIL")
-    TARGET_USER_API_KEY = os.environ.get("TARGET_USER_API_KEY")
 
-    if email and api_key and site and TARGET_USER_EMAIL and TARGET_USER_API_KEY:
+    source_login_email = os.environ.get("SOURCE_USER_EMAIL")
+    source_api_key = os.environ.get("SOURCE_USER_API_KEY")
+
+    target_login_email = os.environ.get("TARGET_USER_EMAIL")
+    target_api_key = os.environ.get("TARGET_USER_API_KEY")
+
+    if (
+        bot_email and bot_api_key and site and
+        source_login_email and source_api_key and
+        target_login_email and target_api_key
+    ):
         log("Loaded Zulip config from environment variables.")
-        return email, api_key, site, TARGET_USER_EMAIL, TARGET_USER_API_KEY
+        return (
+            bot_email, bot_api_key, site,
+            source_login_email, source_api_key,
+            target_login_email, target_api_key
+        )
 
     try:
         with open("config_localonly.json", "r") as f:
@@ -44,52 +56,96 @@ def load_zulip_config():
                 cfg["ZULIP_EMAIL"],
                 cfg["ZULIP_API_KEY"],
                 cfg["ZULIP_SITE"],
+                cfg["SOURCE_USER_EMAIL"],
+                cfg["SOURCE_USER_API_KEY"],
                 cfg["TARGET_USER_EMAIL"],
-                cfg["TARGET_USER_API_KEY"]
+                cfg["TARGET_USER_API_KEY"],
             )
     except Exception as e:
         print("Error loading Zulip config:", e)
         raise
 
 
-ZULIP_EMAIL, ZULIP_API_KEY, ZULIP_SITE, TARGET_USER_EMAIL, TARGET_USER_API_KEY = load_zulip_config()
+(
+    BOT_LOGIN_EMAIL,
+    BOT_API_KEY,
+    ZULIP_SITE,
+    SOURCE_USER_LOGIN_EMAIL,
+    SOURCE_USER_API_KEY,
+    TARGET_USER_LOGIN_EMAIL,
+    TARGET_USER_API_KEY,
+) = load_zulip_config()
 
-client = zulip.Client(
-    email=ZULIP_EMAIL,
-    api_key=ZULIP_API_KEY,
+# ============================================================
+#  CLIENTS
+# ============================================================
+
+# BOT client
+bot_client = zulip.Client(
+    email=BOT_LOGIN_EMAIL,
+    api_key=BOT_API_KEY,
     site=ZULIP_SITE
 )
 
+# SOURCE USER client
+source_client = zulip.Client(
+    email=SOURCE_USER_LOGIN_EMAIL,
+    api_key=SOURCE_USER_API_KEY,
+    site=ZULIP_SITE
+)
+
+# TARGET USER client
 target_client = zulip.Client(
-    email=TARGET_USER_EMAIL,
+    email=TARGET_USER_LOGIN_EMAIL,
     api_key=TARGET_USER_API_KEY,
     site=ZULIP_SITE
 )
+
+
+def get_internal_email(zclient, login_email_label):
+    """
+    Try to fetch the internal Zulip email via /users/me (get_profile).
+    If it fails, fall back to the login email passed in.
+    """
+    try:
+        profile = zclient.get_profile()
+        if profile.get("result") == "success":
+            return profile["email"]
+        else:
+            log(f"[WARN] get_profile failed for {login_email_label}: {profile}")
+            return login_email_label
+    except Exception as e:
+        log(f"[WARN] Exception in get_internal_email for {login_email_label}: {e}")
+        return login_email_label
+
+
+# Internal Zulip emails (used for messaging, sender checks, etc.)
+BOT_ZULIP_EMAIL = get_internal_email(bot_client, BOT_LOGIN_EMAIL)
+SOURCE_USER_ZULIP_EMAIL = get_internal_email(source_client, SOURCE_USER_LOGIN_EMAIL)
+TARGET_USER_ZULIP_EMAIL = get_internal_email(target_client, TARGET_USER_LOGIN_EMAIL)
 
 # ============================================================
 #  CONSTANTS
 # ============================================================
 
-TARGET_USER_ID = 1003298
-NOTIFY_USER = "user1003296@spfr.zulipchat.com"
+# If you need a numeric user ID for presence, set it here:
+TARGET_USER_ID = 1003298  # keep as-is if already correct
 
 TARGET_STREAM = "spring"
 TARGET_TOPIC = "Txt"
-TARGET_USER_EMAIL = "user1003298@spfr.zulipchat.com"
 
 STATE_FILE = "presence.json"
 MESSAGES_FILE = "messages.txt"
 
 # ============================================================
-#  CLEANUP CONSTANTS (from delete_noti.py)
+#  CLEANUP CONSTANTS
 # ============================================================
 
-BOT_SENDER = ZULIP_EMAIL
+BOT_SENDER = BOT_ZULIP_EMAIL
 DM_DELETE_OLDER_THAN = timedelta(hours=48)
 STREAM_DELETE_OLDER_THAN = timedelta(days=3)
 EXCLUDED_STREAM = "spring"
 EXCLUDED_TOPIC = "Txt"
-NOTIFY_USER_EMAIL = "user1003296@spfr.zulipchat.com"
 
 # ============================================================
 #  STATE MANAGEMENT
@@ -116,7 +172,7 @@ def save_state(state):
 # ============================================================
 
 def get_user_presence(user_id):
-    result = client.call_endpoint(
+    result = bot_client.call_endpoint(
         url=f"/users/{user_id}/presence",
         method="GET",
     )
@@ -133,9 +189,9 @@ def get_user_presence(user_id):
 
 def send_presence_notification():
     content = "IsNowActive"
-    client.send_message({
+    bot_client.send_message({
         "type": "private",
-        "to": [NOTIFY_USER],
+        "to": [SOURCE_USER_ZULIP_EMAIL],
         "content": content,
     })
     print("Notification:", content)
@@ -163,9 +219,9 @@ def send_heartbeat_loop():
                     f"Current time (JST): {now_jst.strftime('%Y-%m-%d %H:%M:%S')}"
                 )
                 try:
-                    client.send_message({
+                    bot_client.send_message({
                         "type": "private",
-                        "to": [NOTIFY_USER],
+                        "to": [SOURCE_USER_ZULIP_EMAIL],
                         "content": content,
                     })
                     print(f"Heartbeat sent at hour {hour}.")
@@ -189,7 +245,7 @@ def handle_event(event):
     if msg.get("type") != "stream":
         return
 
-    stream_info = client.get_stream_id(TARGET_STREAM)
+    stream_info = bot_client.get_stream_id(TARGET_STREAM)
     if stream_info["result"] != "success":
         print("Stream not found:", TARGET_STREAM)
         return
@@ -197,12 +253,12 @@ def handle_event(event):
     if (
         msg.get("stream_id") == stream_info["stream_id"]
         and msg.get("subject") == TARGET_TOPIC
-        and msg.get("sender_email") == TARGET_USER_EMAIL
+        and msg.get("sender_email") == TARGET_USER_ZULIP_EMAIL
     ):
         try:
-            client.send_message({
+            bot_client.send_message({
                 "type": "private",
-                "to": [NOTIFY_USER],
+                "to": [SOURCE_USER_ZULIP_EMAIL],
                 "content": "Alert: Join Teams Meeting",
             })
             print("Notification: Message")
@@ -276,14 +332,76 @@ def notify_recent_message_count():
 
     if count > 0:
         try:
-            client.send_message({
+            bot_client.send_message({
                 "type": "private",
-                "to": [TARGET_USER_EMAIL],
+                "to": [TARGET_USER_ZULIP_EMAIL],
                 "content": f"{count} Incident(s).",
             })
             log(f"Recent message notification sent: {count}")
         except Exception as e:
             log(f"[ERROR] Failed to send recent message notification: {e}")
+
+
+# ============================================================
+#  MUTE TARGET TOPIC FOR SOURCE + TARGET USERS
+# ============================================================
+
+def mute_target_topic():
+    """
+    Mutes TARGET_TOPIC under TARGET_STREAM for:
+      - SOURCE_USER (source_client)
+      - TARGET_USER (target_client)
+    Only mutes if currently unmuted.
+    Logs successful mute actions.
+    """
+
+    stream_info = bot_client.get_stream_id(TARGET_STREAM)
+    if stream_info["result"] != "success":
+        log(f"[MUTE] Stream not found: {TARGET_STREAM}")
+        return
+
+    stream_id = stream_info["stream_id"]
+
+    def process_user(zclient, label):
+        result = zclient.call_endpoint(
+            url="/user_topics",
+            method="GET"
+        )
+
+        if result.get("result") != "success":
+            log(f"[MUTE] Failed to fetch user_topics for {label}: {result}")
+            return
+
+        muted_list = result.get("user_topics", [])
+
+        already_muted = any(
+            t["stream_id"] == stream_id and
+            t["topic"] == TARGET_TOPIC and
+            t["visibility_policy"] == 1
+            for t in muted_list
+        )
+
+        if already_muted:
+            log(f"[MUTE] {label}: Topic already muted.")
+            return
+
+        mute_result = zclient.call_endpoint(
+            url="/user_topics",
+            method="POST",
+            request={
+                "stream_id": stream_id,
+                "topic": TARGET_TOPIC,
+                "mute": True
+            }
+        )
+
+        if mute_result.get("result") == "success":
+            print(f"[MUTE] {label}: Muted {TARGET_STREAM}/{TARGET_TOPIC}")
+        else:
+            print(f"[MUTE] {label}: Failed to mute topic: {mute_result}")
+
+    process_user(source_client, "SOURCE_USER")
+    process_user(target_client, "TARGET_USER")
 
 
 # ============================================================
@@ -301,7 +419,7 @@ def load_random_messages():
 
 
 def get_subscribed_streams():
-    result = client.get_subscriptions()
+    result = bot_client.get_subscriptions()
     if result["result"] != "success":
         print("Error fetching subscriptions:", result)
         return []
@@ -311,7 +429,7 @@ def get_subscribed_streams():
 
 
 def get_topics_for_stream(stream_id):
-    result = client.get_stream_topics(stream_id)
+    result = bot_client.get_stream_topics(stream_id)
     if result["result"] != "success":
         print("Error fetching topics:", result)
         return []
@@ -350,7 +468,7 @@ def broadcast_random_messages():
             continue
 
         try:
-            client.send_message({
+            bot_client.send_message({
                 "type": "stream",
                 "to": stream["name"],
                 "subject": topic,
@@ -362,12 +480,12 @@ def broadcast_random_messages():
 
 
 # ============================================================
-#  CLEANUP HELPERS (from delete_noti.py)
+#  CLEANUP HELPERS
 # ============================================================
 
 def fetch_bot_messages(anchor):
     try:
-        result = client.get_messages({
+        result = bot_client.get_messages({
             "anchor": anchor,
             "num_before": 200,
             "num_after": 0,
@@ -398,7 +516,7 @@ def delete_old_direct_messages(messages):
             time.sleep(0.15)
             msg_id = msg["id"]
             try:
-                result = client.call_endpoint(
+                result = bot_client.call_endpoint(
                     url=f"/messages/{msg_id}",
                     method="DELETE"
                 )
@@ -430,7 +548,7 @@ def delete_old_stream_messages(messages):
             time.sleep(0.15)
             msg_id = msg["id"]
             try:
-                result = client.call_endpoint(
+                result = bot_client.call_endpoint(
                     url=f"/messages/{msg_id}",
                     method="DELETE"
                 )
@@ -449,9 +567,9 @@ def send_cleanup_summary(dm_deleted, stream_deleted):
         f"Stream removed: {stream_deleted}"
     )
     try:
-        client.send_message({
+        bot_client.send_message({
             "type": "private",
-            "to": [NOTIFY_USER_EMAIL],
+            "to": [SOURCE_USER_ZULIP_EMAIL],
             "content": summary,
         })
         print("Cleanup summary sent.")
@@ -515,6 +633,7 @@ def check_recent_messages_loop():
 
             if 6 <= hour <= 23:
                 notify_recent_message_count()
+                mute_target_topic()
                 if minute in {30}:
                     broadcast_random_messages()
 
@@ -534,7 +653,10 @@ async def lifespan(app):
     threading.Thread(target=send_heartbeat_loop, daemon=True).start()
     threading.Thread(target=presence_monitor_loop, daemon=True).start()
     threading.Thread(
-        target=lambda: client.call_on_each_event(handle_event, event_types=["message"]),
+        target=lambda: bot_client.call_on_each_event(
+            handle_event,
+            event_types=["message"]
+        ),
         daemon=True
     ).start()
     threading.Thread(target=check_recent_messages_loop, daemon=True).start()
