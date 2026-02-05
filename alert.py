@@ -351,8 +351,7 @@ def mute_target_topic():
     Mutes TARGET_TOPIC under TARGET_STREAM for:
       - SOURCE_USER (source_client)
       - TARGET_USER (target_client)
-    Only mutes if currently unmuted.
-    Logs successful mute actions.
+    Always sends a mute request; safe to call repeatedly.
     """
 
     stream_info = bot_client.get_stream_id(TARGET_STREAM)
@@ -363,28 +362,6 @@ def mute_target_topic():
     stream_id = stream_info["stream_id"]
 
     def process_user(zclient, label):
-        result = zclient.call_endpoint(
-            url="/user_topics",
-            method="GET"
-        )
-
-        if result.get("result") != "success":
-            log(f"[MUTE] Failed to fetch user_topics for {label}: {result}")
-            return
-
-        muted_list = result.get("user_topics", [])
-
-        already_muted = any(
-            t["stream_id"] == stream_id and
-            t["topic"] == TARGET_TOPIC and
-            t["visibility_policy"] == 1
-            for t in muted_list
-        )
-
-        if already_muted:
-            log(f"[MUTE] {label}: Topic already muted.")
-            return
-
         mute_result = zclient.call_endpoint(
             url="/user_topics",
             method="POST",
@@ -396,9 +373,9 @@ def mute_target_topic():
         )
 
         if mute_result.get("result") == "success":
-            print(f"[MUTE] {label}: Muted {TARGET_STREAM}/{TARGET_TOPIC}")
+            log(f"[MUTE] {label}: Muted {TARGET_STREAM}/{TARGET_TOPIC}")
         else:
-            print(f"[MUTE] {label}: Failed to mute topic: {mute_result}")
+            log(f"[MUTE] {label}: Failed to mute topic: {mute_result}")
 
     process_user(source_client, "SOURCE_USER")
     process_user(target_client, "TARGET_USER")
