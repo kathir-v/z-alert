@@ -13,7 +13,7 @@ from fastapi import FastAPI
 #  DEBUG LOGGING FLAG
 # ============================================================
 
-DEBUG_LOG = True   # Set to False to silence detailed logs
+DEBUG_LOG = False   # Set to False to silence detailed logs
 
 def log(msg):
     if DEBUG_LOG:
