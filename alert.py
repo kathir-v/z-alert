@@ -15,11 +15,12 @@ from fastapi import FastAPI
 
 DEBUG_LOG = False   # Set to False to silence detailed logs
 
-
 def log(msg):
     if DEBUG_LOG:
         print(msg)
 
+def log_always(msg):
+    print(msg)
 
 # ============================================================
 #  CONFIG LOADING (ENV first, fallback to config_localonly.json)
@@ -102,27 +103,46 @@ target_client = zulip.Client(
 )
 
 
-def get_internal_email(zclient, login_email_label):
+def get_user_profile_info(zclient, login_email_label, label):
     """
-    Try to fetch the internal Zulip email via /users/me (get_profile).
-    If it fails, fall back to the login email passed in.
+    Returns (zulip_email, user_id).
+    Falls back to (login_email_label, None) if inactive or unreachable.
     """
     try:
         profile = zclient.get_profile()
         if profile.get("result") == "success":
-            return profile["email"]
+            return profile["email"], profile["user_id"]
         else:
-            log(f"[WARN] get_profile failed for {login_email_label}: {profile}")
-            return login_email_label
+            log_always(f"[WARN] get_profile failed for {label}: {profile}")
+            return login_email_label, None
     except Exception as e:
-        log(f"[WARN] Exception in get_internal_email for {login_email_label}: {e}")
-        return login_email_label
+        log_always(f"[WARN] Exception in get_user_profile_info for {label}: {e}")
+        return login_email_label, None
 
+def is_user_active(zclient, label):
+    try:
+        profile = zclient.get_profile()
+        if profile.get("result") == "success":
+            return True
+        else:
+            log(f"[WARN] {label} inactive or auth failed: {profile}")
+            return False
+    except Exception as e:
+        log(f"[WARN] {label} inactive or unreachable: {e}")
+        return False
 
-# Internal Zulip emails (used for messaging, sender checks, etc.)
-BOT_ZULIP_EMAIL = get_internal_email(bot_client, BOT_LOGIN_EMAIL)
-SOURCE_USER_ZULIP_EMAIL = get_internal_email(source_client, SOURCE_USER_LOGIN_EMAIL)
-TARGET_USER_ZULIP_EMAIL = get_internal_email(target_client, TARGET_USER_LOGIN_EMAIL)
+# Internal Zulip emails (used for messaging, sender checks, etc.) and userid
+BOT_ZULIP_EMAIL, BOT_USER_ID = get_user_profile_info(
+    bot_client, BOT_LOGIN_EMAIL, "BOT_USER"
+)
+
+SOURCE_USER_ZULIP_EMAIL, SOURCE_USER_ID = get_user_profile_info(
+    source_client, SOURCE_USER_LOGIN_EMAIL, "SOURCE_USER"
+)
+
+TARGET_USER_ZULIP_EMAIL, TARGET_USER_ID = get_user_profile_info(
+    target_client, TARGET_USER_LOGIN_EMAIL, "TARGET_USER"
+)
 
 # ============================================================
 #  CONSTANTS
@@ -292,6 +312,10 @@ def presence_monitor_loop():
 # ============================================================
 
 def get_messages_last_15_minutes(stream, topic):
+    if not is_user_active(target_client, "TARGET_USER"):
+        log("[INFO] Skipping message count — TARGET_USER is deactivated.")
+        return 0
+    
     try:
         result = target_client.get_messages({
             "anchor": "newest",
@@ -377,9 +401,15 @@ def mute_target_topic():
         else:
             log(f"[MUTE] {label}: Failed to mute topic: {mute_result}")
 
-    process_user(source_client, "SOURCE_USER")
-    process_user(target_client, "TARGET_USER")
+    if is_user_active(source_client, "SOURCE_USER"):
+        process_user(source_client, "SOURCE_USER")
+    else:
+        log("[INFO] SOURCE_USER is deactivated — skipping mute.")
 
+    if is_user_active(target_client, "TARGET_USER"):
+        process_user(target_client, "TARGET_USER")
+    else:
+        log("[INFO] TARGET_USER is deactivated — skipping mute.")
 
 # ============================================================
 #  RANDOM MESSAGE BROADCASTER
@@ -618,6 +648,30 @@ def check_recent_messages_loop():
 
         time.sleep(1)
 
+# =====================================================================
+#  For quick deactivation using XXX shortcut and reactivation using REA
+# =====================================================================
+
+def deactivate_user(user_id):
+    try:
+        result = bot_client.call_endpoint(
+            url=f"/users/{user_id}",
+            method="DELETE"
+        )
+        return result
+    except Exception as e:
+        return {"result": "error", "msg": str(e)}
+
+
+def reactivate_user(user_id):
+    try:
+        result = bot_client.call_endpoint(
+            url=f"/users/{user_id}/reactivate",
+            method="POST"
+        )
+        return result
+    except Exception as e:
+        return {"result": "error", "msg": str(e)}
 
 # ============================================================
 #  FASTAPI LIFESPAN (STARTUP THREADS)
@@ -661,3 +715,30 @@ def delete_noti_endpoint():
         "dm_deleted": result["dm_deleted"],
         "stream_deleted": result["stream_deleted"]
     }
+
+@app.get("/dea3297")
+def deactivate_source():
+    result = deactivate_user(SOURCE_USER_ID)
+    log_always(result)
+    return {"status": "success" if result.get("result") == "success" else "failed"}
+
+
+@app.get("/dea8221")
+def deactivate_target():
+    result = deactivate_user(TARGET_USER_ID)
+    log_always(result)
+    return {"status": "success" if result.get("result") == "success" else "failed"}
+
+
+@app.get("/rea3297")
+def reactivate_source():
+    result = reactivate_user(SOURCE_USER_ID)
+    log_always(result)
+    return {"status": "success" if result.get("result") == "success" else "failed"}
+
+
+@app.get("/rea8221")
+def reactivate_target():
+    result = reactivate_user(TARGET_USER_ID)
+    log_always(result)
+    return {"status": "success" if result.get("result") == "success" else "failed"}
