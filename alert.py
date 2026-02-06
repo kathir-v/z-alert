@@ -119,18 +119,6 @@ def get_user_profile_info(zclient, login_email_label, label):
         log_always(f"[WARN] Exception in get_user_profile_info for {label}: {e}")
         return login_email_label, None
 
-def is_user_active(zclient, label):
-    try:
-        profile = zclient.get_profile()
-        if profile.get("result") == "success":
-            return True
-        else:
-            log(f"[WARN] {label} inactive or auth failed: {profile}")
-            return False
-    except Exception as e:
-        log(f"[WARN] {label} inactive or unreachable: {e}")
-        return False
-
 # Internal Zulip emails (used for messaging, sender checks, etc.) and userid
 BOT_ZULIP_EMAIL, BOT_USER_ID = get_user_profile_info(
     bot_client, BOT_LOGIN_EMAIL, "BOT_USER"
@@ -312,9 +300,6 @@ def presence_monitor_loop():
 # ============================================================
 
 def get_messages_last_15_minutes(stream, topic):
-    if not is_user_active(target_client, "TARGET_USER"):
-        log("[INFO] Skipping message count — TARGET_USER is deactivated.")
-        return 0
     
     try:
         result = target_client.get_messages({
@@ -401,15 +386,8 @@ def mute_target_topic():
         else:
             log(f"[MUTE] {label}: Failed to mute topic: {mute_result}")
 
-    if is_user_active(source_client, "SOURCE_USER"):
-        process_user(source_client, "SOURCE_USER")
-    else:
-        log("[INFO] SOURCE_USER is deactivated — skipping mute.")
-
-    if is_user_active(target_client, "TARGET_USER"):
-        process_user(target_client, "TARGET_USER")
-    else:
-        log("[INFO] TARGET_USER is deactivated — skipping mute.")
+    process_user(source_client, "SOURCE_USER")
+    process_user(target_client, "TARGET_USER")
 
 # ============================================================
 #  RANDOM MESSAGE BROADCASTER
@@ -742,3 +720,18 @@ def reactivate_target():
     result = reactivate_user(TARGET_USER_ID)
     log_always(result)
     return {"status": "success" if result.get("result") == "success" else "failed"}
+
+@app.get("/15minbatch")
+def run_15min_batch():
+    try:
+        log_always("[MANUAL] Running 15-minute batch now...")
+
+        notify_recent_message_count()
+        mute_target_topic()
+
+        log_always("[MANUAL] 15-minute batch completed.")
+        return {"status": "success"}
+
+    except Exception as e:
+        log_always(f"[MANUAL] 15-minute batch failed: {e}")
+        return {"status": "failed"}
